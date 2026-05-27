@@ -37,14 +37,14 @@ My Recording.openstudio/
 
 ```ts
 type ProjectManifest = {
-  app: 'open-studio'
-  packageVersion: 1
-  projectId: string
-  projectSchemaVersion: 1
-  createdAt: string
-  updatedAt: string
-  projectFile: 'project.json'
-}
+  app: 'open-studio';
+  packageVersion: 1;
+  projectId: string;
+  projectSchemaVersion: 1;
+  createdAt: string;
+  updatedAt: string;
+  projectFile: 'project.json';
+};
 ```
 
 ## 4. Core Project Schema
@@ -53,39 +53,39 @@ type ProjectManifest = {
 
 ```ts
 type OpenStudioProject = {
-  schemaVersion: 1
-  projectId: string
-  name: string
-  createdAt: string
-  updatedAt: string
+  schemaVersion: 1;
+  projectId: string;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
 
-  recording: RecordingAsset
-  source: SourceMetadata
-  timeline: TimelineModel
-  cursor: CursorRenderSettings
-  motion: MotionSettings
-  exportDefaults: ExportSettings
-}
+  recording: RecordingAsset;
+  source: SourceMetadata;
+  timeline: TimelineModel;
+  cursor: CursorRenderSettings;
+  motion: MotionSettings;
+  exportDefaults: ExportSettings;
+};
 ```
 
 ## 5. Recording Asset
 
 ```ts
 type RecordingAsset = {
-  id: string
-  relativePath: 'media/raw-recording.mp4'
-  codec: 'h264'
-  container: 'mp4'
-  fps: 60
-  durationMs: number
-  widthPx: number
-  heightPx: number
-  hasCursor: false
-  capturedStartTimeAt: string
-  capturedEndTimeAt: string
-  byteSize?: number
-  contentHash?: string
-}
+  id: string;
+  relativePath: 'media/raw-recording.mp4';
+  codec: 'h264';
+  container: 'mp4';
+  fps: 60;
+  durationMs: number;
+  widthPx: number;
+  heightPx: number;
+  hasCursor: false;
+  capturedStartTimeAt: string;
+  capturedEndTimeAt: string;
+  byteSize?: number;
+  contentHash?: string;
+};
 ```
 
 ## 6. Source Metadata
@@ -94,21 +94,21 @@ Source metadata records the selected display and coordinate space used by cursor
 
 ```ts
 type SourceMetadata = {
-  captureMode: 'display'
+  captureMode: 'display';
   display: {
-    id: string
-    name: string
-    widthPx: number
-    heightPx: number
-    scaleFactor: number
-    originX: number
-    originY: number
-  }
+    id: string;
+    name: string;
+    widthPx: number;
+    heightPx: number;
+    scaleFactor: number;
+    originX: number;
+    originY: number;
+  };
   coordinateSpace: {
-    origin: 'top-left'
-    unit: 'display-pixel'
-  }
-}
+    origin: 'top-left';
+    unit: 'display-pixel';
+  };
+};
 ```
 
 Coordinates are relative to the captured display, with `0,0` at the top-left of the captured frame.
@@ -119,25 +119,25 @@ The V1 timeline contains the full clip and one editable zoom segment track.
 
 ```ts
 type TimelineModel = {
-  durationMs: number
-  zoomSegments: ZoomSegment[]
-}
+  durationMs: number;
+  zoomSegments: ZoomSegment[];
+};
 ```
 
 ```ts
 type ZoomSegment = {
-  id: string
-  source: 'generated' | 'manual'
-  triggerClickId?: string
-  startMs: number
-  endMs: number
-  scale: number
+  id: string;
+  source: 'generated' | 'manual';
+  triggerClickId?: string;
+  startMs: number;
+  endMs: number;
+  scale: number;
   focalPoint: {
-    mode: 'cursor'
-  }
-  createdAt: string
-  updatedAt: string
-}
+    mode: 'cursor';
+  };
+  createdAt: string;
+  updatedAt: string;
+};
 ```
 
 Generated zooms default to `scale: 2`. The focal point remains cursor-based in V1 so preview and export can pan automatically to keep the cursor visible while zoomed.
@@ -148,19 +148,19 @@ Cursor movement events are stored separately in `events/cursor-movements.json`.
 
 ```ts
 type CursorMovementsFile = {
-  schemaVersion: 1
-  recordingId: string
-  sampleRateHintHz?: number
-  events: CursorMovementEvent[]
-}
+  schemaVersion: 1;
+  recordingId: string;
+  sampleRateHintHz?: number;
+  events: CursorMovementEvent[];
+};
 ```
 
 ```ts
 type CursorMovementEvent = {
-  tMs: number
-  x: number
-  y: number
-}
+  tMs: number;
+  x: number;
+  y: number;
+};
 ```
 
 ## 9. Mouse Click Events
@@ -169,91 +169,91 @@ Mouse click events are stored separately in `events/mouse-clicks.json`.
 
 ```ts
 type MouseClicksFile = {
-  schemaVersion: 1
-  recordingId: string
-  events: MouseClickEvent[]
-}
+  schemaVersion: 1;
+  recordingId: string;
+  events: MouseClickEvent[];
+};
 ```
 
 ```ts
 type MouseClickEvent = {
-  id: string
-  tMs: number
-  x: number
-  y: number
-  button: 'left' | 'right' | 'middle' | 'other'
-  phase: 'down' | 'up' | 'click'
-  clickCount: number
-}
+  id: string;
+  tMs: number;
+  x: number;
+  y: number;
+  button: 'left' | 'right' | 'middle' | 'other';
+  phase: 'down' | 'up' | 'click';
+  clickCount: number;
+};
 ```
 
 ## 10. Cursor Render Settings
 
 ```ts
 type CursorRenderSettings = {
-  asset: 'system-default'
-  sizePx: number
+  asset: 'system-default';
+  sizePx: number;
   anchor: {
-    x: number
-    y: number
-  }
-  visible: true
-}
+    x: number;
+    y: number;
+  };
+  visible: true;
+};
 ```
 
 ## 11. Motion Settings
 
 ```ts
 type MotionSettings = {
-  zoomSpring: SpringSettings
-  panSpring: SpringSettings
-  cursorSpring: SpringSettings
+  zoomSpring: SpringSettings;
+  panSpring: SpringSettings;
+  cursorSpring: SpringSettings;
   motionBlur: {
-    screen: boolean
-    cursor: boolean
-  }
-}
+    screen: boolean;
+    cursor: boolean;
+  };
+};
 ```
 
 ```ts
 type SpringSettings = {
-  tension: number
-  stiffness: number
-  damping: number
-}
+  tension: number;
+  stiffness: number;
+  damping: number;
+};
 ```
 
 ## 12. Export Settings
 
 ```ts
 type ExportSettings = {
-  format: 'mp4'
-  codec: 'h264'
-  fps: 60
-  resolution: 'original' | '1080p'
-  destination: 'desktop'
-}
+  format: 'mp4';
+  codec: 'h264';
+  fps: 60;
+  resolution: 'original' | '1080p';
+  destination: 'desktop';
+};
 ```
 
 Export jobs are not required for canonical preview state, but a lightweight history file is useful for completion UI and debugging.
 
 ```ts
 type ExportHistoryFile = {
-  schemaVersion: 1
-  exports: ExportRecord[]
-}
+  schemaVersion: 1;
+  exports: ExportRecord[];
+};
 ```
 
 ```ts
 type ExportRecord = {
-  id: string
-  startedAt: string
-  completedAt?: string
-  status: 'completed' | 'failed' | 'cancelled'
-  outputPath?: string
-  settings: ExportSettings
-  errorCode?: string
-}
+  id: string;
+  startedAt: string;
+  completedAt?: string;
+  status: 'completed' | 'failed' | 'cancelled';
+  outputPath?: string;
+  settings: ExportSettings;
+  errorCode?: string;
+};
 ```
 
 ## 13. Versioning and Migration

@@ -30,45 +30,45 @@ Requests use JSON-RPC 2.0-style request IDs for correlation.
 
 ```ts
 type JsonRpcRequest<TParams = unknown> = {
-  jsonrpc: '2.0'
-  id: string
-  method: string
-  params?: TParams
-}
+  jsonrpc: '2.0';
+  id: string;
+  method: string;
+  params?: TParams;
+};
 ```
 
 Successful responses return a result.
 
 ```ts
 type JsonRpcSuccess<TResult = unknown> = {
-  jsonrpc: '2.0'
-  id: string
-  result: TResult
-}
+  jsonrpc: '2.0';
+  id: string;
+  result: TResult;
+};
 ```
 
 Failed responses return a structured error.
 
 ```ts
 type JsonRpcFailure = {
-  jsonrpc: '2.0'
-  id: string
+  jsonrpc: '2.0';
+  id: string;
   error: {
-    code: string
-    message: string
-    details?: unknown
-  }
-}
+    code: string;
+    message: string;
+    details?: unknown;
+  };
+};
 ```
 
 Helper events are JSON-RPC notifications with no request ID.
 
 ```ts
 type JsonRpcNotification<TParams = unknown> = {
-  jsonrpc: '2.0'
-  method: string
-  params?: TParams
-}
+  jsonrpc: '2.0';
+  method: string;
+  params?: TParams;
+};
 ```
 
 `stdout` is reserved for protocol messages. `stderr` is reserved for logs and diagnostics.
@@ -108,15 +108,15 @@ displays.list() -> {
 
 ```ts
 type NativeDisplay = {
-  id: string
-  name: string
-  widthPx: number
-  heightPx: number
-  scaleFactor: number
-  originX: number
-  originY: number
-  isPrimary: boolean
-}
+  id: string;
+  name: string;
+  widthPx: number;
+  heightPx: number;
+  scaleFactor: number;
+  originX: number;
+  originY: number;
+  isPrimary: boolean;
+};
 ```
 
 ### 4.4 Recording
@@ -204,27 +204,27 @@ Example event payloads:
 
 ```ts
 type RecordingProgressEvent = {
-  recordingId: string
-  elapsedMs: number
-  droppedFrames?: number
-}
+  recordingId: string;
+  elapsedMs: number;
+  droppedFrames?: number;
+};
 ```
 
 ```ts
 type ExportProgressEvent = {
-  exportId: string
-  progress: number
-  elapsedMs: number
-  estimatedRemainingMs?: number
-}
+  exportId: string;
+  progress: number;
+  elapsedMs: number;
+  estimatedRemainingMs?: number;
+};
 ```
 
 ```ts
 type ExportCompletedEvent = {
-  exportId: string
-  outputPath: string
-  completedAt: string
-}
+  exportId: string;
+  outputPath: string;
+  completedAt: string;
+};
 ```
 
 ## 6. Electron Preload API
@@ -233,129 +233,129 @@ The preload layer exposes explicit app commands under `window.openStudio`.
 
 ```ts
 type OpenStudioApi = {
-  permissions: PermissionsApi
-  displays: DisplaysApi
-  recording: RecordingApi
-  projects: ProjectsApi
-  export: ExportApi
-  app: AppApi
-}
+  permissions: PermissionsApi;
+  displays: DisplaysApi;
+  recording: RecordingApi;
+  projects: ProjectsApi;
+  export: ExportApi;
+  app: AppApi;
+};
 ```
 
 ### 6.1 Permissions API
 
 ```ts
 type PermissionsApi = {
-  getScreenRecordingStatus(): Promise<PermissionStatus>
-  openScreenRecordingSettings(): Promise<void>
-  onChanged(handler: (status: PermissionStatus) => void): Unsubscribe
-}
+  getScreenRecordingStatus(): Promise<PermissionStatus>;
+  openScreenRecordingSettings(): Promise<void>;
+  onChanged(handler: (status: PermissionStatus) => void): Unsubscribe;
+};
 ```
 
 ```ts
-type PermissionStatus = 'granted' | 'denied' | 'notDetermined' | 'restricted'
+type PermissionStatus = 'granted' | 'denied' | 'notDetermined' | 'restricted';
 ```
 
 ### 6.2 Displays API
 
 ```ts
 type DisplaysApi = {
-  list(): Promise<AppDisplay[]>
-}
+  list(): Promise<AppDisplay[]>;
+};
 ```
 
 ```ts
 type AppDisplay = {
-  id: string
-  name: string
-  widthPx: number
-  heightPx: number
-  scaleFactor: number
-  isPrimary: boolean
-}
+  id: string;
+  name: string;
+  widthPx: number;
+  heightPx: number;
+  scaleFactor: number;
+  isPrimary: boolean;
+};
 ```
 
 ### 6.3 Recording API
 
 ```ts
 type RecordingApi = {
-  start(displayId: string): Promise<RecordingSession>
-  stop(recordingId: string): Promise<ProjectOpenResult>
-  cancel(recordingId: string): Promise<void>
-  onStateChanged(handler: (event: RecordingEvent) => void): Unsubscribe
-}
+  start(displayId: string): Promise<RecordingSession>;
+  stop(recordingId: string): Promise<ProjectOpenResult>;
+  cancel(recordingId: string): Promise<void>;
+  onStateChanged(handler: (event: RecordingEvent) => void): Unsubscribe;
+};
 ```
 
 ```ts
 type RecordingSession = {
-  recordingId: string
-  displayId: string
-  startedAt: string
-}
+  recordingId: string;
+  displayId: string;
+  startedAt: string;
+};
 ```
 
 ### 6.4 Projects API
 
 ```ts
 type ProjectsApi = {
-  open(path: string): Promise<ProjectOpenResult>
-  save(project: OpenStudioProject): Promise<ProjectSaveResult>
-  updateTimeline(projectId: string, timeline: TimelineModel): Promise<ProjectSaveResult>
-  updateCursor(projectId: string, cursor: CursorRenderSettings): Promise<ProjectSaveResult>
-  updateMotion(projectId: string, motion: MotionSettings): Promise<ProjectSaveResult>
-  getAssetUrl(projectId: string, relativePath: string): Promise<string>
-}
+  open(path: string): Promise<ProjectOpenResult>;
+  save(project: OpenStudioProject): Promise<ProjectSaveResult>;
+  updateTimeline(projectId: string, timeline: TimelineModel): Promise<ProjectSaveResult>;
+  updateCursor(projectId: string, cursor: CursorRenderSettings): Promise<ProjectSaveResult>;
+  updateMotion(projectId: string, motion: MotionSettings): Promise<ProjectSaveResult>;
+  getAssetUrl(projectId: string, relativePath: string): Promise<string>;
+};
 ```
 
 ```ts
 type ProjectOpenResult = {
-  projectId: string
-  packagePath: string
-  project: OpenStudioProject
+  projectId: string;
+  packagePath: string;
+  project: OpenStudioProject;
   assetUrls: {
-    rawVideo: string
-    poster?: string
-  }
-}
+    rawVideo: string;
+    poster?: string;
+  };
+};
 ```
 
 ```ts
 type ProjectSaveResult = {
-  projectId: string
-  savedAt: string
-}
+  projectId: string;
+  savedAt: string;
+};
 ```
 
 ### 6.5 Export API
 
 ```ts
 type ExportApi = {
-  start(projectId: string, settings: ExportSettings): Promise<ExportSession>
-  cancel(exportId: string): Promise<void>
-  onProgress(handler: (event: ExportEvent) => void): Unsubscribe
-}
+  start(projectId: string, settings: ExportSettings): Promise<ExportSession>;
+  cancel(exportId: string): Promise<void>;
+  onProgress(handler: (event: ExportEvent) => void): Unsubscribe;
+};
 ```
 
 ```ts
 type ExportSession = {
-  exportId: string
-  projectId: string
-  startedAt: string
-  outputPath: string
-}
+  exportId: string;
+  projectId: string;
+  startedAt: string;
+  outputPath: string;
+};
 ```
 
 ### 6.6 App API
 
 ```ts
 type AppApi = {
-  getVersion(): Promise<string>
-  onError(handler: (error: AppError) => void): Unsubscribe
-}
+  getVersion(): Promise<string>;
+  onError(handler: (error: AppError) => void): Unsubscribe;
+};
 ```
 
 ```ts
-type Unsubscribe = () => void
+type Unsubscribe = () => void;
 ```
 
 ## 7. Main Process Services
@@ -459,11 +459,11 @@ type AppError = {
     | 'PROJECT_SAVE_FAILED'
     | 'EXPORT_FAILED'
     | 'HELPER_UNAVAILABLE'
-    | 'OPERATION_CANCELLED'
-  message: string
-  recoverable: boolean
-  details?: unknown
-}
+    | 'OPERATION_CANCELLED';
+  message: string;
+  recoverable: boolean;
+  details?: unknown;
+};
 ```
 
 Swift errors should use stable native error codes. Electron main maps them into renderer-safe `AppError` objects. User-facing copy belongs in Electron, not Swift.
