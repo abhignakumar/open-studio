@@ -1,21 +1,22 @@
 # System Architecture
 
-Last updated: May 26, 2026
+Last updated: May 28, 2026
 
 ## 1. Purpose
 
 This document defines the V1 technical stack and system architecture for Open Studio.
 
-It focuses on process boundaries, runtime responsibilities, native integration, preview rendering, inter-process communication, and testing strategy. It intentionally does not define the project data model, package schema, or detailed UI design.
+It focuses on process boundaries, runtime responsibilities, native integration, recording capture, preview rendering, export rendering, inter-process communication, and testing strategy. It intentionally does not define the project data model, package schema, or detailed UI design.
 
 ## 2. Architecture Goals
 
 - Ship a focused macOS V1 while keeping the app shell compatible with future cross-platform direction.
-- Keep macOS-native capture and system functionality isolated from the Electron UI.
-- Implement the editor preview entirely in the Electron renderer using browser rendering technologies.
-- Use a typed, testable JSON-RPC boundary between Electron and Swift.
+- Keep the Electron renderer responsible for browser-native capture, preview composition, and export composition.
+- Keep filesystem access, process spawning, app lifecycle, and project package writes inside Electron main.
+- Use a small Swift CLI only for global mouse movement and mouse click capture.
+- Avoid a long-lived Swift helper process and avoid JSON-RPC between Electron and Swift.
 - Keep recording, native event capture, preview composition, and export responsibilities clearly separated.
-- Favor deterministic tests for UI, IPC, rendering math, and native process behavior.
+- Favor deterministic tests for UI, IPC, rendering math, browser media pipelines, and native CLI lifecycle behavior.
 
 ## 3. Technology Stack
 
@@ -25,12 +26,25 @@ It focuses on process boundaries, runtime responsibilities, native integration, 
 - **Build tooling:** electron-vite.
 - **Language:** TypeScript.
 - **Renderer framework:** React.
-- **Renderer graphics:** WebGL-backed canvas rendering for final V1 preview composition.
+- **Renderer graphics:** WebGL-backed canvas rendering for preview and export composition.
 - **Main process runtime:** Node.js inside Electron main.
-- **Native runtime:** Swift helper process for macOS functionality.
-- **IPC between Electron and Swift:** JSON-RPC over stdio.
+- **Native runtime:** Swift CLI executable for global mouse event capture.
+- **IPC:** Typed Electron preload APIs between renderer and main. The Swift CLI uses process arguments, output files, stderr diagnostics, and exit codes.
 
-### 3.2 Preview Rendering Stack
+### 3.2 Recording Capture Stack
+
+The renderer owns screen video capture using browser/Electron media primitives. It captures the selected display without the system cursor and produces the raw H.264 MP4 recording for the project package.
+
+The main process owns all disk writes. The renderer must send capture data to main through explicit preload APIs; it must not receive direct filesystem access.
+
+The Swift CLI runs alongside renderer capture only to record global pointer metadata:
+
+- Mouse movement samples.
+- Mouse click events.
+- Timestamps aligned to the recording start time.
+- Coordinates aligned to the selected display pixel space.
+
+### 3.3 Preview Rendering Stack
 
 The V1 preview is implemented completely in the Electron renderer process.
 
@@ -44,39 +58,50 @@ Recommended preview stack:
 
 Recommended V1 implementation options:
 
-- **Preferred:** PixiJS for WebGL scene composition if it fits the preview model cleanly.
+- **Preferred:** PixiJS for WebGL scene composition if it fits the preview and export model cleanly.
 - **Acceptable:** A small custom WebGL renderer if PixiJS adds too much abstraction around video textures and frame-accurate control.
 - **Prototype only:** Canvas 2D for early experiments. It should not be the assumed final renderer for V1 because transform-heavy preview, blur, and cursor compositing need smoother GPU-backed behavior.
 
 WebGPU should not be the default V1 choice unless a later spike proves it is needed and stable enough for the target macOS/Electron runtime.
 
-### 3.3 Native Stack
+### 3.4 Export Rendering Stack
 
-The Swift helper owns macOS-only functionality:
+Export uses the browser media API technique described in "Fast video rendering and encoding using web APIs": https://pietrasiak.com/fast-video-rendering-and-encoding-using-web-apis.
 
-- Screen Recording permission checks and recovery-state reporting.
-- Display enumeration.
-- Screen capture setup and control.
-- Mouse movement and click event capture.
-- Native media/file operations that require macOS APIs.
-- Export orchestration when native media APIs are required.
+The export pipeline should:
 
-The Swift helper exposes no UI. It should be signed and packaged with the Electron app.
+- Run in a dedicated renderer-side export surface or worker-like renderer context.
+- Demux the raw MP4 with a library such as MP4Box.js.
+- Decode source video frames with WebCodecs `VideoDecoder`.
+- Convert decoded `VideoFrame` objects into WebGL textures without reading pixels into JavaScript memory.
+- Render each output frame through the same WebGL composition path used by preview.
+- Create a new `VideoFrame` directly from the export canvas.
+- Encode frames with WebCodecs `VideoEncoder`.
+- Mux encoded video chunks into the final MP4 container.
+- Send encoded chunks or the completed MP4 data to Electron main for filesystem persistence.
+
+Export must avoid `canvas.readPixels`, per-frame PNG dumps, and raw pixel transfer through JavaScript memory.
 
 ## 4. Runtime Architecture
 
 ```mermaid
 flowchart LR
-  Renderer["Electron Renderer\nReact + TypeScript\nPreview WebGL Canvas"]
+  Renderer["Electron Renderer\nReact + TypeScript\nCapture, Preview, Export"]
   Preload["Electron Preload\nTyped Safe API"]
-  Main["Electron Main\nWindows, App Lifecycle,\nJSON-RPC Client"]
-  Swift["Swift Helper Process\nmacOS Native APIs"]
-  OS["macOS\nScreenCaptureKit, AVFoundation,\nCoreGraphics"]
+  Main["Electron Main\nWindows, App Lifecycle,\nFilesystem, CLI Lifecycle"]
+  SwiftCLI["Swift Event CLI\nGlobal Mouse Events"]
+  BrowserAPIs["Browser Media APIs\ngetDisplayMedia, WebGL,\nWebCodecs"]
+  Disk["Local Disk\n.openstudio Packages,\nExported MP4"]
+  OS["macOS\nPermissions, Displays,\nGlobal Event Taps"]
 
   Renderer <--> Preload
   Preload <--> Main
-  Main <--> |"stdio JSON-RPC"| Swift
-  Swift <--> OS
+  Renderer <--> BrowserAPIs
+  Main --> |"spawn args"| SwiftCLI
+  SwiftCLI --> |"event JSON files"| Disk
+  SwiftCLI --> OS
+  Main <--> Disk
+  Main <--> OS
 ```
 
 ## 5. Process Responsibilities
@@ -94,17 +119,15 @@ The renderer owns user-facing application surfaces:
 - Export progress and completion UI.
 - Complete preview playback and visual composition.
 
+The renderer owns browser-native media work:
+
+- Starting and stopping screen video capture for the selected display.
+- Producing or finalizing the raw H.264 MP4 recording data.
+- Running preview playback with `HTMLVideoElement` and WebGL.
+- Running deterministic export rendering and encoding with WebGL and WebCodecs.
+- Reporting recording and export progress through preload APIs.
+
 The renderer must not directly access Node.js, the filesystem, or native process APIs. It talks to the app through a typed preload API.
-
-The renderer owns preview frame composition:
-
-- Reads raw video through browser media primitives.
-- Applies zoom and pan transforms.
-- Renders the high-resolution cursor overlay.
-- Applies cursor motion interpolation.
-- Applies zoom and pan animation.
-- Applies preview motion blur or blur approximations.
-- Keeps playback, scrubbing, and timeline state responsive.
 
 ### 5.2 Electron Preload
 
@@ -115,7 +138,8 @@ It should:
 - Expose explicit app commands instead of generic IPC send/receive access.
 - Validate message shapes at the boundary where practical.
 - Prevent renderer access to Node.js primitives.
-- Provide event subscriptions for recording, export, permission, and native-helper status changes.
+- Provide event subscriptions for recording, export, permission, and app status changes.
+- Provide explicit recording/export data transfer APIs for chunks, final artifacts, progress, and cancellation.
 
 ### 5.3 Electron Main
 
@@ -125,72 +149,76 @@ The main process owns desktop application coordination:
 - Window creation and routing.
 - Menu behavior.
 - Dialogs and platform shell integration.
-- Launching, monitoring, and terminating the Swift helper.
-- JSON-RPC client implementation over helper stdio.
-- Request correlation, timeout handling, cancellation, and progress-event forwarding.
-- Translating native-helper failures into structured renderer-facing errors.
+- Permission coordination and recovery flows.
+- Display/source selection support.
+- Temporary recording workspaces.
+- Project package creation and schema migrations.
+- All filesystem writes for raw recordings, event JSON files, project JSON, and exported MP4 files.
+- Launching, monitoring, stopping, and terminating the Swift event CLI.
+- Translating capture, CLI, package, and export failures into structured renderer-facing errors.
 
-The main process should not implement preview rendering. It may coordinate export requests and project/file operations, but visual preview composition belongs to the renderer.
+The main process should not implement preview rendering or export frame composition. It coordinates export requests and persists output, but visual rendering and encoding belong to the renderer-side browser pipeline.
 
-### 5.4 Swift Helper
+### 5.4 Swift Event CLI
 
-The Swift helper owns native capability, not app orchestration.
+The Swift CLI owns native global mouse event capture, not app orchestration.
 
 It should:
 
 - Start as a child process spawned by Electron main.
-- Read JSON-RPC requests from stdin.
-- Write JSON-RPC responses and events to stdout.
-- Write diagnostic logs to stderr or a dedicated log sink, never mixed into stdout JSON-RPC frames.
-- Keep native state machines explicit for permission, display listing, recording, capture finalization, and export.
-- Return structured errors with stable codes.
+- Receive all required configuration as command-line arguments.
+- Capture global mouse movement and click events using macOS APIs.
+- Write cursor movement events to `events/cursor-movements.json`.
+- Write mouse click events to `events/mouse-clicks.json`.
+- Align event timestamps to the recording start timestamp provided by main.
+- Align coordinates to the selected display pixel space.
+- Write diagnostic logs to stderr only.
+- Exit `0` after clean stop/finalization.
+- Exit nonzero on failure.
 
-The helper should be independently testable without launching Electron.
+The CLI should not write protocol messages to stdout and should not own project package layout decisions.
 
-## 6. JSON-RPC Boundary
+## 6. Swift CLI Contract
 
-### 6.1 Transport
+### 6.1 Invocation
 
-- Transport is stdio between Electron main and the Swift helper.
-- Messages use JSON-RPC-style request IDs for correlation.
-- stdout is reserved for protocol messages.
-- stderr is reserved for logs and diagnostics.
-- The main process owns helper lifecycle and restart behavior.
+Electron main spawns the CLI when recording starts. The exact executable path is packaging-specific, but the argument contract should be stable.
 
-### 6.2 Contract Principles
+```text
+open-studio-events \
+  --recording-id <recordingId> \
+  --display-id <displayId> \
+  --display-origin-x <px> \
+  --display-origin-y <px> \
+  --display-width <px> \
+  --display-height <px> \
+  --display-scale-factor <scale> \
+  --recording-started-at <isoTimestamp> \
+  --cursor-output <absolute path to cursor-movements.json> \
+  --click-output <absolute path to mouse-clicks.json>
+```
 
-- Define protocol types in TypeScript first for the Electron side.
-- Mirror protocol types in Swift using `Codable`.
-- Keep request and event names stable and versionable.
-- Use explicit command groups such as permissions, displays, recording, export, and health.
-- Treat progress and long-running state changes as events, not polling-only responses.
-- Support cancellation for long-running native operations.
-- Keep preview-only rendering commands out of the Swift helper.
+Main owns the temporary workspace and passes absolute output paths. The CLI creates or replaces only the files passed in its arguments.
 
-### 6.3 Example Command Groups
+### 6.2 Stop and Finalization
 
-- `health.ping`
-- `permissions.getScreenRecordingStatus`
-- `permissions.openScreenRecordingSettings`
-- `displays.list`
-- `recording.start`
-- `recording.stop`
-- `recording.cancel`
-- `export.start`
-- `export.cancel`
+Main stops the CLI when recording stops. The preferred stop mechanism is a graceful process signal that lets the CLI flush and close both JSON files before exit.
 
-### 6.4 Example Event Groups
+Main treats recording finalization as successful only when:
 
-- `helper.ready`
-- `helper.error`
-- `permissions.changed`
-- `recording.started`
-- `recording.progress`
-- `recording.completed`
-- `recording.failed`
-- `export.progress`
-- `export.completed`
-- `export.failed`
+- Renderer capture has produced a valid raw H.264 MP4.
+- The Swift CLI exited with code `0`.
+- `cursor-movements.json` exists and validates against schema version 1.
+- `mouse-clicks.json` exists and validates against schema version 1.
+
+If the CLI exits nonzero or either event file is missing/invalid, main surfaces a structured recording failure and preserves recoverable artifacts where possible.
+
+### 6.3 Diagnostics
+
+- stderr is diagnostic text for logs and debugging.
+- stdout is unused for V1.
+- Main may capture stderr for failure details, but user-facing copy belongs in Electron.
+- The CLI should keep errors stable enough for main to map common failures into app error codes.
 
 ## 7. Preview Architecture
 
@@ -223,19 +251,62 @@ Preview implementation rules:
 - The WebGL renderer receives a render-state object and draws the frame.
 - The preview renderer must be disposable so editor windows can close without leaving GPU or media resources alive.
 - Preview behavior should be deterministic for a fixed video timestamp and edit state.
+- Preview playback may tolerate dropped frames because the raw video remains the realtime playback clock.
 
-## 8. Error, Progress, and Cancellation Strategy
+## 8. Export Architecture
 
-- Native failures should cross the Swift-to-main boundary as structured JSON-RPC errors.
-- Main process should map native errors to renderer-safe errors with user-actionable categories.
-- Long-running operations need progress events.
+Export is separate from preview because every frame must be correct and deterministic.
+
+```mermaid
+flowchart TB
+  Package[".openstudio Package"]
+  Demux["MP4 Demuxer\nMP4Box.js or equivalent"]
+  Decoder["WebCodecs VideoDecoder"]
+  Frame["Decoded VideoFrame"]
+  RenderState["Timeline + Cursor + Motion Math"]
+  WebGL["WebGL Export Renderer"]
+  CanvasFrame["VideoFrame from Canvas"]
+  Encoder["WebCodecs VideoEncoder"]
+  Muxer["MP4 Muxer"]
+  Main["Electron Main"]
+  Output["Exported MP4"]
+
+  Package --> Demux
+  Demux --> Decoder
+  Decoder --> Frame
+  Package --> RenderState
+  Frame --> WebGL
+  RenderState --> WebGL
+  WebGL --> CanvasFrame
+  CanvasFrame --> Encoder
+  Encoder --> Muxer
+  Muxer --> Main
+  Main --> Output
+```
+
+Export implementation rules:
+
+- Export advances frame-by-frame at the requested FPS.
+- Export must not depend on realtime `HTMLVideoElement` playback.
+- Export reuses the same render-state calculation and WebGL composition behavior as preview.
+- Source `VideoFrame` objects must be closed as soon as they are no longer needed.
+- Encoder queue size must be bounded so renderer memory does not grow without limit.
+- Encoded output is handed to main for writing to the Desktop output path.
+- Export cancellation must stop decoding, rendering, encoding, muxing, and output writes.
+
+## 9. Error, Progress, and Cancellation Strategy
+
+- Renderer-facing errors use stable app error codes.
+- Main maps capture, CLI, filesystem, package, and export persistence errors to renderer-safe errors with user-actionable categories.
+- Long-running recording and export operations need progress events.
 - Recording and export both need cancellation paths.
-- Helper crashes should be detected by Electron main and surfaced as recoverable app errors where possible.
-- Protocol logs must not corrupt stdout JSON-RPC messages.
+- Swift CLI crashes should be detected by Electron main and surfaced as recoverable app errors where possible.
+- Renderer export failures should include enough structured context for main to update export history.
+- Diagnostic logs must not be treated as protocol data.
 
-## 9. Testing Strategy
+## 10. Testing Strategy
 
-### 9.1 React Renderer Tests
+### 10.1 React Renderer Tests
 
 Use:
 
@@ -248,20 +319,21 @@ Use:
 Test:
 
 - Recording picker state transitions.
+- Renderer capture orchestration with mocked browser capture APIs.
 - Editor controls.
 - Timeline interactions.
 - Export progress UI.
 - Accessibility labels for primary controls.
-- Pure preview math, including zoom interpolation, cursor interpolation, coordinate mapping, and spring calculations.
+- Pure preview/export math, including zoom interpolation, cursor interpolation, coordinate mapping, and spring calculations.
 
-### 9.2 Preview Graphics Tests
+### 10.2 Preview And Export Graphics Tests
 
 Use:
 
 - **Playwright** for browser-level rendering tests.
-- Deterministic preview fixtures.
+- Deterministic preview/export fixtures.
 - Screenshot comparisons for broad visual regressions.
-- Targeted canvas pixel checks for critical preview composition behavior.
+- Targeted canvas pixel checks for critical composition behavior.
 
 Test:
 
@@ -271,30 +343,33 @@ Test:
 - Scrubbing render correctness.
 - Motion interpolation at selected timestamps.
 - Renderer cleanup when closing or switching projects.
+- Export frame selection at deterministic timestamps.
+- Preview/export render-state parity.
+- WebCodecs encoder progress and cancellation behavior where available.
 
-jsdom should not be used to validate WebGL rendering behavior.
+jsdom should not be used to validate WebGL or WebCodecs rendering behavior.
 
-### 9.3 Electron Main Process Tests
+### 10.3 Electron Main Process Tests
 
 Use:
 
 - **Vitest** with the Node test environment.
-- Node stream mocks for stdio JSON-RPC.
-- Fake helper processes for integration tests.
+- Fake child-process adapters for Swift CLI lifecycle tests.
+- Temporary directories for package and export persistence tests.
 
 Test:
 
-- Swift helper launch and shutdown behavior.
-- JSON-RPC request correlation.
-- Timeout handling.
-- Cancellation behavior.
-- Progress event forwarding.
-- Helper crash handling.
+- Swift CLI argument construction.
+- CLI launch and shutdown behavior.
+- CLI exit-code handling.
+- stderr diagnostic capture.
+- Missing or invalid event file handling.
+- Temporary workspace creation and cleanup.
+- Recording finalization into `.openstudio` packages.
+- Export output path allocation and file writes.
 - Structured error translation.
 
-Integration tests should include a fake Swift helper executable or script that speaks the same JSON-RPC protocol over stdio. This keeps CI deterministic without requiring real macOS capture permissions for most tests.
-
-### 9.4 End-to-End Tests
+### 10.4 End-to-End Tests
 
 Use:
 
@@ -303,15 +378,15 @@ Use:
 Test:
 
 - App launch.
-- Recording picker workflow with a fake helper.
-- Permission-denied state with a fake helper.
-- Opening the editor after a fake recording completion.
+- Recording picker workflow with mocked browser capture and fake Swift CLI.
+- Permission-denied state.
+- Opening the editor after fake recording completion.
 - Timeline and preview smoke behavior with deterministic fixtures.
-- Export progress and completion UI with a fake helper.
+- Export progress and completion UI with a mocked renderer export job.
 
-Keep most E2E tests fake-helper based. Add a small macOS-only native E2E suite later for real display enumeration, permission behavior, and short capture/export validation.
+Keep most E2E tests fake-capture and fake-CLI based. Add a small macOS-only native E2E suite later for real permission behavior, short screen capture, event capture, and export validation.
 
-### 9.5 Swift Tests
+### 10.5 Swift Tests
 
 Use:
 
@@ -320,34 +395,35 @@ Use:
 
 Test:
 
-- JSON-RPC decoding and encoding.
-- Command routing.
-- Error encoding.
-- Permission-state mapping.
-- Display enumeration adapters.
-- Recording state machine behavior.
-- Export state machine behavior.
-- Helper stdio framing.
+- CLI argument parsing.
+- Event tap adapters.
+- Coordinate mapping to selected display pixels.
+- Timestamp alignment to recording start.
+- JSON event file encoding.
+- Graceful stop and flush behavior.
+- Nonzero failure exits.
 
 Swift tests should run independently from Electron wherever possible.
 
-## 10. Non-Goals
+## 11. Non-Goals
 
 This document does not define:
 
 - Project package schema.
 - Persistent data model.
 - Detailed UI design.
-- Detailed export encoding settings.
+- Detailed export encoding settings beyond the browser API architecture.
 - Product roadmap beyond V1.
 - Cloud, account, collaboration, or sharing architecture.
 
-## 11. Recommended Initial Engineering Order
+## 12. Recommended Initial Engineering Order
 
 1. Scaffold Electron with electron-vite, React, and TypeScript.
-2. Scaffold the Swift helper as an independently runnable process.
-3. Implement a minimal JSON-RPC stdio bridge with `health.ping`.
-4. Add Vitest coverage for renderer pure logic and Electron main JSON-RPC client behavior.
-5. Add Swift tests for JSON-RPC decoding and command routing.
-6. Add a fake helper for deterministic Electron integration and E2E tests.
+2. Define typed preload APIs for recording capture data transfer, package finalization, and export output persistence.
+3. Prototype renderer screen capture for a selected display and H.264 MP4 finalization.
+4. Scaffold the Swift event CLI as an independently runnable process.
+5. Add Electron main lifecycle handling for spawning, stopping, and validating the Swift CLI.
+6. Add package finalization that imports raw MP4 plus `cursor-movements.json` and `mouse-clicks.json`.
 7. Prototype renderer preview with `HTMLVideoElement` plus WebGL canvas before building full editor controls.
+8. Prototype WebCodecs export with MP4 demux/decode, WebGL frame composition, `VideoFrame(canvas)`, `VideoEncoder`, and MP4 muxing.
+9. Add deterministic tests around package persistence, CLI lifecycle, preview math, and export frame selection.

@@ -1,6 +1,6 @@
 # Data Model
 
-Last updated: May 26, 2026
+Last updated: May 28, 2026
 
 ## 1. Summary
 
@@ -27,7 +27,7 @@ My Recording.openstudio/
   media/
     raw-recording.mp4
   events/
-    mouse-movements.json
+    cursor-movements.json
     mouse-clicks.json
 ```
 
