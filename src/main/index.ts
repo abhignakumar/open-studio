@@ -6,7 +6,7 @@ void app.whenReady().then(async () => {
   if (process.platform !== 'darwin') {
     dialog.showErrorBox('Unsupported Platform', 'This application is only supported on macOS.');
     app.quit();
-    process.exit();
+    return;
   }
 
   app.on('browser-window-created', (_, window) => {
@@ -22,13 +22,16 @@ void app.whenReady().then(async () => {
         'This application requires screen recording permission to function. Please grant the permission in the System Settings and restart the application.',
       buttons: ['Open System Settings', 'Cancel'],
     });
-    if (dialogResponse.response === 0) {
-      await shell.openExternal(
-        'x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture',
-      );
+    try {
+      if (dialogResponse.response === 0) {
+        await shell.openExternal(
+          'x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture',
+        );
+      }
+    } finally {
+      app.quit();
     }
-    app.quit();
-    process.exit();
+    return;
   }
 });
 
