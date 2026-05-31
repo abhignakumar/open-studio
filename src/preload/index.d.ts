@@ -1,8 +1,7 @@
-import type { ElectronAPI } from '@electron-toolkit/preload';
+import type { RecorderAPI } from '../main/lib/types';
 
-declare global {
+export declare global {
   interface Window {
-    electron: ElectronAPI;
-    api: unknown;
+    electronAPI: RecorderAPI;
   }
 }
