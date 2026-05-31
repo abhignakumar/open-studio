@@ -16,6 +16,7 @@
     "check": "npm run typecheck && npm run lint && npm run format:check",
     "start": "electron-vite preview",
     "dev": "electron-vite dev",
+    "dev:watch": "electron-vite dev --watch",
     "build": "npm run typecheck && electron-vite build",
     "postinstall": "electron-builder install-app-deps",
     "build:unpack": "npm run build && electron-builder --dir",

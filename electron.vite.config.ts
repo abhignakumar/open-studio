@@ -6,7 +6,15 @@ import { defineConfig } from 'electron-vite';
 
 export default defineConfig({
   main: {},
-  preload: {},
+  preload: {
+    build: {
+      rollupOptions: {
+        input: {
+          recorder: resolve(__dirname, 'src/preload/recorder.ts'),
+        },
+      },
+    },
+  },
   renderer: {
     resolve: {
       alias: {
@@ -14,5 +22,12 @@ export default defineConfig({
       },
     },
     plugins: [react(), tailwindcss()],
+    build: {
+      rollupOptions: {
+        input: {
+          recorder: resolve(__dirname, 'src/renderer/recorder.html'),
+        },
+      },
+    },
   },
 });
