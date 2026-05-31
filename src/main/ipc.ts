@@ -24,7 +24,7 @@ export function setupRecorderIpc(): void {
 
     const menu = Menu.buildFromTemplate(
       mappedSources.map((source) => ({
-        label: source.displayName,
+        label: source.displayName ?? 'Unknown display',
         click: () => {
           // Start recording
           recorderWindow?.close();
