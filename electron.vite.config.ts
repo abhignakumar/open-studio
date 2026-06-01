@@ -8,9 +8,11 @@ export default defineConfig({
   main: {},
   preload: {
     build: {
+      isolatedEntries: true,
       rollupOptions: {
         input: {
           recorder: resolve(__dirname, 'src/preload/recorder.ts'),
+          'stop-recorder': resolve(__dirname, 'src/preload/stop-recorder.ts'),
         },
       },
     },
@@ -26,6 +28,7 @@ export default defineConfig({
       rollupOptions: {
         input: {
           recorder: resolve(__dirname, 'src/renderer/recorder.html'),
+          'stop-recorder': resolve(__dirname, 'src/renderer/stop-recorder.html'),
         },
       },
     },

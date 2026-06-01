@@ -1,13 +1,15 @@
 import { Monitor, CircleX } from 'lucide-react';
 
+import { recorderApi } from './api';
+
 export default function App() {
   function handleCloseCurrentWindow() {
-    window.electronAPI.closeCurrentWindow();
+    recorderApi.closeCurrentWindow();
   }
 
   async function handleListDisplaySources() {
     try {
-      await window.electronAPI.listDisplaySources();
+      await recorderApi.listDisplaySources();
     } catch (error) {
       console.error('Failed to list display sources', error);
     }

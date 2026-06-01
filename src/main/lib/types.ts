@@ -3,3 +3,10 @@ export interface RecorderAPI {
   closeCurrentWindow: () => void;
   listDisplaySources: () => Promise<void>;
 }
+
+export interface StopRecorderAPI {
+  type: 'stop-recorder';
+  stopRecording: () => void;
+}
+
+export type ElectronAPI = RecorderAPI | StopRecorderAPI;

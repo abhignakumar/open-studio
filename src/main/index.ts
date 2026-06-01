@@ -1,7 +1,7 @@
 import { optimizer } from '@electron-toolkit/utils';
 import { app, dialog, systemPreferences, shell, BrowserWindow, desktopCapturer } from 'electron';
 
-import { setupRecorderIpc } from './ipc';
+import { setupRecorderIpc, setupStopRecorderIpc } from './ipc';
 import { createRecorderWindow } from './windows';
 
 import type { DesktopCapturerSource } from 'electron';
@@ -55,6 +55,7 @@ void app.whenReady().then(async () => {
   });
 
   setupRecorderIpc();
+  setupStopRecorderIpc();
 
   // Create and show the recorder window
   await createRecorderWindow();
