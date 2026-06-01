@@ -2,12 +2,12 @@ import { ipcMain, screen, BrowserWindow, Menu } from 'electron';
 
 import { displaySources } from '.';
 import { CLOSE_CURRENT_WINDOW, LIST_DISPLAY_SOURCES, STOP_RECORDING } from './lib/constants';
-import { createStopRecorderWindow } from './windows';
+import { createRecorderWindow, createStopRecorderWindow } from './windows';
 
 export function setupRecorderIpc(): void {
   ipcMain.on(CLOSE_CURRENT_WINDOW, (event) => {
-    const window = BrowserWindow.fromWebContents(event.sender);
-    window?.close();
+    const recorderWindow = BrowserWindow.fromWebContents(event.sender);
+    recorderWindow?.close();
   });
 
   ipcMain.handle(LIST_DISPLAY_SOURCES, (event) => {
@@ -29,7 +29,12 @@ export function setupRecorderIpc(): void {
         click: async () => {
           // Start recording
           recorderWindow?.close();
-          await createStopRecorderWindow();
+          try {
+            await createStopRecorderWindow();
+          } catch (error) {
+            console.error('Failed to open stop recorder window', error);
+            await createRecorderWindow();
+          }
         },
       })),
     );
@@ -42,7 +47,9 @@ export function setupRecorderIpc(): void {
 }
 
 export function setupStopRecorderIpc(): void {
-  ipcMain.on(STOP_RECORDING, () => {
+  ipcMain.on(STOP_RECORDING, (event) => {
+    const stopRecorderWindow = BrowserWindow.fromWebContents(event.sender);
+    stopRecorderWindow?.close();
     console.log('Stopping recording');
   });
 }
