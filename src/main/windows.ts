@@ -33,3 +33,34 @@ export async function createRecorderWindow(): Promise<BrowserWindow> {
 
   return recorderWindow;
 }
+
+export async function createStopRecorderWindow(): Promise<BrowserWindow> {
+  const stopRecorderWindow = new BrowserWindow({
+    width: 66,
+    height: 66,
+    frame: false,
+    show: false,
+    resizable: false,
+    alwaysOnTop: true,
+    fullscreen: false,
+    fullscreenable: false,
+    minimizable: false,
+    maximizable: false,
+    webPreferences: {
+      preload: join(__dirname, '../preload/stop-recorder.js'),
+    },
+  });
+  stopRecorderWindow.setVisibleOnAllWorkspaces(true);
+
+  stopRecorderWindow.on('ready-to-show', () => {
+    stopRecorderWindow.show();
+  });
+
+  if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
+    await stopRecorderWindow.loadURL(`${process.env['ELECTRON_RENDERER_URL']}/stop-recorder.html`);
+  } else {
+    await stopRecorderWindow.loadFile(join(__dirname, '../renderer/stop-recorder.html'));
+  }
+
+  return stopRecorderWindow;
+}

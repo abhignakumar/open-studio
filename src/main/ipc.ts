@@ -1,7 +1,8 @@
 import { ipcMain, screen, BrowserWindow, Menu } from 'electron';
 
 import { displaySources } from '.';
-import { CLOSE_CURRENT_WINDOW, LIST_DISPLAY_SOURCES } from './lib/constants';
+import { CLOSE_CURRENT_WINDOW, LIST_DISPLAY_SOURCES, STOP_RECORDING } from './lib/constants';
+import { createStopRecorderWindow } from './windows';
 
 export function setupRecorderIpc(): void {
   ipcMain.on(CLOSE_CURRENT_WINDOW, (event) => {
@@ -25,9 +26,10 @@ export function setupRecorderIpc(): void {
     const menu = Menu.buildFromTemplate(
       mappedSources.map((source) => ({
         label: source.displayName ?? 'Unknown display',
-        click: () => {
+        click: async () => {
           // Start recording
           recorderWindow?.close();
+          await createStopRecorderWindow();
         },
       })),
     );
@@ -36,5 +38,11 @@ export function setupRecorderIpc(): void {
       window: recorderWindow ?? undefined,
     });
     return;
+  });
+}
+
+export function setupStopRecorderIpc(): void {
+  ipcMain.on(STOP_RECORDING, () => {
+    console.log('Stopping recording');
   });
 }
