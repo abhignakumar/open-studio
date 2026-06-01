@@ -1,7 +1,7 @@
-import type { RecorderAPI, StopRecorderAPI } from '../main/lib/types';
+import type { ElectronAPI } from '../main/lib/types';
 
 export declare global {
   interface Window {
-    electronAPI: RecorderAPI | StopRecorderAPI;
+    electronAPI: ElectronAPI;
   }
 }
