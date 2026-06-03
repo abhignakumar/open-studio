@@ -1,12 +1,8 @@
 import { optimizer } from '@electron-toolkit/utils';
-import { app, dialog, systemPreferences, shell, BrowserWindow, desktopCapturer } from 'electron';
+import { app, dialog, systemPreferences, shell, BrowserWindow } from 'electron';
 
 import { setupRecorderIpc, setupStopRecorderIpc } from './ipc';
 import { createRecorderWindow } from './windows';
-
-import type { DesktopCapturerSource } from 'electron';
-
-export const displaySources: DesktopCapturerSource[] = [];
 
 void app.whenReady().then(async () => {
   // Check if the platform is macOS
@@ -40,13 +36,6 @@ void app.whenReady().then(async () => {
     }
     return;
   }
-
-  displaySources.push(
-    ...(await desktopCapturer.getSources({
-      types: ['screen'],
-      thumbnailSize: { width: 0, height: 0 },
-    })),
-  );
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
