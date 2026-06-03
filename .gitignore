@@ -6,3 +6,12 @@ out
 *.log*
 .vscode
 build
+
+# SwiftPM .gitignore
+native/Recorder/.build
+native/Recorder/Packages
+xcuserdata/
+DerivedData/
+.swiftpm/configuration/registries.json
+.swiftpm/xcode/package.xcworkspace/contents.xcworkspacedata
+.netrc
