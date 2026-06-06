@@ -8,14 +8,6 @@ Open Studio is a native macOS desktop application for creating polished screen r
 
 V1 is not a full video editor. It should feel fast, focused, and intentionally limited.
 
-Reference context:
-
-- Screen Studio homepage: https://screenstudio.net/en/
-- Recording modes and capture setup: https://preview.screen.studio/guide/new-recording
-- Zoom editing: https://preview.screen.studio/guide/adding-editing-zooms
-- Cursor settings: https://preview.screen.studio/guide/cursor
-- Export settings: https://preview.screen.studio/guide/explanation-of-export-settings
-
 ## 2. Functional Requirements
 
 ### 2.1 App Launch and Permissions

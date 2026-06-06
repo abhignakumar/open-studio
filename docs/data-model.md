@@ -11,6 +11,7 @@ The V1 project model is intentionally narrow:
 - One project contains one screen recording.
 - The raw screen recording is stored as an H.264 MP4.
 - Cursor movement events and mouse click events are stored as separate JSON files.
+- The Swift capture CLI produces the raw MP4 and both event JSON files for each completed recording.
 - User-editable project state, such as zoom segments and render settings, is stored as versioned structured JSON.
 - All data remains local by default.
 

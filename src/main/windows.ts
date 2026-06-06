@@ -51,6 +51,7 @@ export async function createStopRecorderWindow(): Promise<BrowserWindow> {
     },
   });
   stopRecorderWindow.setVisibleOnAllWorkspaces(true);
+  stopRecorderWindow.setContentProtection(true);
 
   stopRecorderWindow.on('ready-to-show', () => {
     stopRecorderWindow.show();

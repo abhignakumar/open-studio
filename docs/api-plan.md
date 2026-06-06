@@ -8,27 +8,27 @@ Open Studio V1 uses three API layers:
 
 - **Electron Preload API:** renderer-facing workflow API for permissions, displays, recording capture, project loading/saving, editor state, and export.
 - **Electron Main Services:** trusted orchestration layer for filesystem access, project packages, window lifecycle, Swift CLI lifecycle, validation, output persistence, and event forwarding.
-- **Swift Event CLI Contract:** native-only executable boundary for global mouse movement and mouse click capture.
+- **Swift Capture CLI Contract:** native-only executable boundary for selected-display screen capture, global mouse movement capture, and mouse click capture.
 
-Recording video capture and final export rendering run in renderer-side browser pipelines. Electron main writes all files to disk. The Swift CLI does not speak JSON-RPC and does not own screen video capture, project package layout, or export rendering.
+Recording capture runs in the Swift CLI spawned by Electron main. Final export rendering runs in renderer-side browser pipelines. Electron main writes all files to disk. The Swift CLI does not speak JSON-RPC and does not own project package layout or export rendering.
 
 ## 2. Process Boundary Principles
 
 - The renderer talks only to the preload API.
 - The renderer never receives Node.js, filesystem, process, or generic IPC access.
 - Electron main owns project package layout, schema migrations, temporary workspaces, and final file writes.
-- Electron main owns Swift CLI spawning, graceful shutdown, exit-code handling, stderr capture, and event file validation.
-- The Swift CLI owns only global mouse movement and mouse click capture.
-- Swift receives absolute event output paths from Electron main but does not decide package layout.
+- Electron main owns Swift CLI spawning, graceful shutdown, exit-code handling, stderr capture, and capture artifact validation.
+- The Swift CLI owns selected-display screen capture, global mouse movement capture, and mouse click capture.
+- Swift receives absolute output paths from Electron main but does not decide package layout.
 - Preview and export rendering remain in renderer-side browser code and consume the same persisted project model.
 - Export output defaults to the user's Desktop and is written by Electron main.
 
-## 3. Swift Event CLI Contract
+## 3. Swift Capture CLI Contract
 
 Electron main starts the Swift CLI when a recording session starts.
 
 ```text
-open-studio-events \
+open-studio-capture \
   --recording-id <recordingId> \
   --display-id <displayId> \
   --display-origin-x <px> \
@@ -37,12 +37,15 @@ open-studio-events \
   --display-height <px> \
   --display-scale-factor <scale> \
   --recording-started-at <isoTimestamp> \
+  --video-output <absolute path to raw-recording.mp4> \
   --cursor-output <absolute path to cursor-movements.json> \
   --click-output <absolute path to mouse-clicks.json>
 ```
 
 CLI behavior:
 
+- Captures the selected display as a cursor-free H.264 MP4 at 60 FPS.
+- Writes the raw recording to the `--video-output` MP4 file.
 - Writes cursor samples to the `--cursor-output` JSON file.
 - Writes mouse click events to the `--click-output` JSON file.
 - Aligns timestamps to `--recording-started-at`.
@@ -52,7 +55,7 @@ CLI behavior:
 - Exits `0` after clean finalization.
 - Exits nonzero on failure.
 
-Main treats the CLI as successful only when the process exits `0` and both JSON files exist and validate.
+Main treats the CLI as successful only when the process exits `0`, the MP4 exists and validates, and both JSON files exist and validate.
 
 ## 4. Electron Preload API
 
@@ -106,13 +109,11 @@ type AppDisplay = {
 
 ### 4.3 Recording API
 
-The recording API coordinates renderer capture and main-owned persistence. The renderer starts browser screen capture after `start` returns, streams or submits raw video data through explicit methods, and then asks main to finalize the project package.
+The recording API coordinates a main-owned recording session. The renderer starts and stops recording through preload APIs, while Electron main spawns the Swift capture CLI, monitors progress, validates artifacts, and finalizes the project package.
 
 ```ts
 type RecordingApi = {
   start(displayId: string): Promise<RecordingSession>;
-  appendVideoChunk(recordingId: string, chunk: ArrayBuffer): Promise<void>;
-  completeVideo(recordingId: string, artifact: RecordingVideoArtifact): Promise<void>;
   stop(recordingId: string): Promise<ProjectOpenResult>;
   cancel(recordingId: string): Promise<void>;
   onStateChanged(handler: (event: RecordingEvent) => void): Unsubscribe;
@@ -124,31 +125,7 @@ type RecordingSession = {
   recordingId: string;
   displayId: string;
   startedAt: string;
-  videoUploadMode: 'chunks' | 'completeFile';
 };
-```
-
-```ts
-type RecordingVideoArtifact =
-  | {
-      mode: 'chunksComplete';
-      codec: 'h264';
-      container: 'mp4';
-      durationMs: number;
-      widthPx: number;
-      heightPx: number;
-      fps: 60;
-    }
-  | {
-      mode: 'completeFile';
-      data: ArrayBuffer;
-      codec: 'h264';
-      container: 'mp4';
-      durationMs: number;
-      widthPx: number;
-      heightPx: number;
-      fps: 60;
-    };
 ```
 
 ```ts
@@ -301,17 +278,17 @@ type Unsubscribe = () => void;
 
 ## 5. Main Process Services
 
-### 5.1 SwiftEventCliService
+### 5.1 SwiftCaptureCliService
 
-`SwiftEventCliService` owns:
+`SwiftCaptureCliService` owns:
 
 - Resolving the packaged Swift CLI executable path.
 - Building CLI arguments from the active recording session.
 - Starting and stopping the Swift CLI.
 - Capturing stderr diagnostics.
 - Detecting crashes and nonzero exits.
-- Validating `cursor-movements.json` and `mouse-clicks.json` after stop.
-- Mapping native event capture failures into renderer-safe app errors.
+- Validating `raw-recording.mp4`, `cursor-movements.json`, and `mouse-clicks.json` after stop.
+- Mapping native capture failures into renderer-safe app errors.
 
 ### 5.2 ProjectPackageService
 
@@ -331,10 +308,9 @@ type Unsubscribe = () => void;
 
 - Creating recording IDs.
 - Creating temporary recording workspaces.
-- Starting the Swift event CLI.
-- Accepting renderer-provided raw video chunks or completed MP4 artifacts.
-- Stopping or cancelling renderer capture coordination.
-- Stopping the Swift event CLI and validating event files.
+- Starting the Swift capture CLI.
+- Stopping or cancelling Swift capture.
+- Validating the Swift capture CLI exit code and output artifacts.
 - Finalizing completed recordings into `.openstudio` packages.
 - Generating default zoom segments from mouse click events.
 - Opening the editor after recording completion.
@@ -368,18 +344,16 @@ type Unsubscribe = () => void;
 
 1. Renderer calls `recording.start(displayId)`.
 2. Main creates a `recordingId`, recording start timestamp, and temporary workspace.
-3. Main starts the Swift event CLI with display metadata and absolute event JSON output paths.
+3. Main starts the Swift capture CLI with display metadata plus absolute MP4 and event JSON output paths.
 4. Main returns `RecordingSession` to the renderer.
-5. Renderer starts browser screen capture for the selected display and records cursor-free H.264 MP4 data.
-6. Renderer sends video chunks through `recording.appendVideoChunk` or sends a completed MP4 through `recording.completeVideo`.
-7. Renderer calls `recording.stop(recordingId)`.
-8. Main gracefully stops the Swift event CLI and validates its exit code plus event JSON files.
-9. Main validates the raw MP4 artifact.
-10. Main creates the `.openstudio` package.
-11. Main writes canonical project JSON and imports media/event artifacts.
-12. Main generates default zoom segments from click events.
-13. Main opens the editor window.
-14. Renderer receives `ProjectOpenResult`.
+5. Swift captures the selected display as cursor-free H.264 MP4 while recording cursor movement and click events.
+6. Renderer calls `recording.stop(recordingId)`.
+7. Main gracefully stops the Swift capture CLI and validates its exit code plus MP4 and event JSON files.
+8. Main creates the `.openstudio` package.
+9. Main writes canonical project JSON and imports media/event artifacts.
+10. Main generates default zoom segments from click events.
+11. Main opens the editor window.
+12. Renderer receives `ProjectOpenResult`.
 
 ## 7. Export Flow
 
@@ -420,7 +394,7 @@ type AppError = {
     | 'DISPLAY_UNAVAILABLE'
     | 'RECORDING_ALREADY_ACTIVE'
     | 'RECORDING_FAILED'
-    | 'EVENT_CAPTURE_FAILED'
+    | 'CAPTURE_FAILED'
     | 'PROJECT_INVALID'
     | 'PROJECT_UNSUPPORTED_VERSION'
     | 'PROJECT_SAVE_FAILED'
@@ -434,7 +408,7 @@ type AppError = {
 };
 ```
 
-Swift CLI failures, renderer capture failures, renderer export failures, and filesystem failures should all be mapped into renderer-safe `AppError` objects. User-facing copy belongs in Electron, not Swift.
+Swift capture failures, renderer export failures, and filesystem failures should all be mapped into renderer-safe `AppError` objects. User-facing copy belongs in Electron, not Swift.
 
 ## 10. Testing Strategy
 
@@ -446,7 +420,8 @@ Test:
 - CLI launch and graceful shutdown.
 - Nonzero exit handling.
 - stderr diagnostic capture.
-- Missing event file handling.
+- Missing raw MP4 or event file handling.
+- Invalid raw MP4 handling.
 - Invalid event JSON handling.
 - Native error mapping.
 
@@ -456,7 +431,6 @@ Test:
 
 - Method input validation.
 - Renderer-safe return shapes.
-- Recording chunk/artifact transfer validation.
 - Export chunk/artifact transfer validation.
 - Subscription cleanup.
 - Rejection of unknown or malformed commands.
@@ -473,15 +447,14 @@ Test:
 - Generated zoom persistence.
 - Importing raw MP4 plus `cursor-movements.json` and `mouse-clicks.json`.
 
-### 10.4 Renderer Capture Tests
+### 10.4 Recording UI Tests
 
 Test:
 
-- Screen capture orchestration with mocked browser capture APIs.
+- Recording picker start/stop state transitions.
 - Stop/cancel behavior.
-- H.264 MP4 artifact metadata validation.
 - Progress event reporting.
-- Failure mapping when browser capture fails.
+- Failure mapping when Swift capture fails.
 
 ### 10.5 Renderer Export Tests
 
@@ -497,7 +470,7 @@ Test:
 
 ### 10.6 Workflow Integration Tests
 
-Use mocked browser capture, mocked renderer export, and a fake Swift CLI for deterministic tests.
+Use fake Swift capture and mocked renderer export for deterministic tests.
 
 Test:
 
@@ -506,7 +479,7 @@ Test:
 - Display listing.
 - Recording start and stop.
 - Package creation after recording.
-- Event capture failure.
+- Capture failure.
 - Editor open result.
 - Export progress.
 - Export completion.
@@ -519,11 +492,12 @@ Test:
 Test:
 
 - CLI argument parsing.
+- Screen capture adapter behavior.
 - Event capture adapter behavior.
-- Timestamp alignment.
+- Timestamp alignment across video, cursor movement, and click events.
 - Coordinate mapping.
 - Event JSON encoding.
-- Graceful stop and flush behavior.
+- Graceful stop and flush behavior for MP4 and JSON outputs.
 - Nonzero failure exits.
 
 ## 11. V1 Assumptions
@@ -531,8 +505,8 @@ Test:
 - Raw recording remains H.264 MP4 at 60 FPS.
 - Renderer talks only to preload.
 - Electron main owns all project package schema decisions and disk writes.
-- Swift owns only global mouse movement and mouse click capture.
-- Swift event capture uses args, file outputs, stderr diagnostics, and exit codes.
+- Swift owns selected-display screen capture, global mouse movement capture, and mouse click capture.
+- Swift capture uses args, file outputs, stderr diagnostics, and exit codes.
 - Final export runs in a dedicated renderer-side export surface using browser media APIs.
 - Export output defaults to Desktop.
 - Export format is H.264 MP4 at 60 FPS.
