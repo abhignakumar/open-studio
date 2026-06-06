@@ -2,6 +2,8 @@ import Foundation
 import ScreenCaptureKit
 import AVFoundation
 import CoreMedia
+import CoreGraphics
+import ApplicationServices
 
 // MARK: - CLI Entry Point
 @available(macOS 14.0, *)
@@ -39,7 +41,7 @@ struct RecorderCLI {
         }
         
         guard let parsedDisplayId = displayId, let parsedOutputPath = outputPath else {
-            fputs("Usage: \(args[0]) --displayId <id> --outputPath <path>\n", stderr)
+            fputs("Usage: \(args[0]) --displayId <id> --outputPath <dir_path>\n", stderr)
             exit(1)
         }
         
@@ -55,11 +57,28 @@ struct RecorderCLI {
     static func run(displayId: UInt32, outputPath: String) async throws {
         // Expand tilde in path (e.g. ~/Desktop -> /Users/username/Desktop)
         let expandedPath = (outputPath as NSString).expandingTildeInPath
-        let outputURL = URL(fileURLWithPath: expandedPath)
+        let outputDirURL = URL(fileURLWithPath: expandedPath)
         
-        // Validation: Verify if file already exists
-        if FileManager.default.fileExists(atPath: outputURL.path) {
-            fputs("Error: Output file already exists at '\(outputURL.path)'.\n", stderr)
+        // Output Files Mapping
+        let displayURL = outputDirURL.appendingPathComponent("display.mp4")
+        let clicksURL = outputDirURL.appendingPathComponent("mouse-clicks.json")
+        let movesURL = outputDirURL.appendingPathComponent("mouse-moves.json")
+        let metadataURL = outputDirURL.appendingPathComponent("metadata.json")
+        
+        // Setup output directory if it doesn't exist
+        if !FileManager.default.fileExists(atPath: outputDirURL.path) {
+            do {
+                try FileManager.default.createDirectory(at: outputDirURL, withIntermediateDirectories: true)
+            } catch {
+                fputs("Error creating directory for output path: \(error.localizedDescription)\n", stderr)
+                exit(1)
+            }
+        }
+        
+        // Validation: Verify if files already exist to prevent destructive overwriting
+        let fm = FileManager.default
+        if fm.fileExists(atPath: displayURL.path) || fm.fileExists(atPath: clicksURL.path) || fm.fileExists(atPath: movesURL.path) || fm.fileExists(atPath: metadataURL.path) {
+            fputs("Error: One or more target output files already exist in '\(outputDirURL.path)'.\n", stderr)
             exit(1)
         }
         
@@ -84,19 +103,8 @@ struct RecorderCLI {
             exit(1)
         }
         
-        // Setup output directory if it doesn't exist
-        let dirURL = outputURL.deletingLastPathComponent()
-        if !FileManager.default.fileExists(atPath: dirURL.path) {
-            do {
-                try FileManager.default.createDirectory(at: dirURL, withIntermediateDirectories: true)
-            } catch {
-                fputs("Error creating directory for output path: \(error.localizedDescription)\n", stderr)
-                exit(1)
-            }
-        }
-        
         // Initialize Recorder
-        let recorder = Recorder(display: display, outputURL: outputURL)
+        let recorder = try Recorder(display: display, outputDirURL: outputDirURL)
         do {
             try await recorder.start()
             fputs("Recording started. Press [Enter] or send [Ctrl+C] to stop...\n", stdout)
@@ -144,7 +152,7 @@ struct RecorderCLI {
         
         do {
             try await recorder.stop()
-            fputs("Recording saved successfully to: \(outputURL.path)\n", stdout)
+            fputs("Recording and mouse events saved successfully to: \(outputDirURL.path)\n", stdout)
         } catch {
             fputs("Error finalizing recording: \(error.localizedDescription)\n", stderr)
             exit(1)
@@ -154,9 +162,13 @@ struct RecorderCLI {
 
 // MARK: - Recorder Engine
 @available(macOS 14.0, *)
-class Recorder: NSObject, SCStreamDelegate, SCStreamOutput {
+class Recorder: NSObject, SCStreamDelegate, SCStreamOutput, @unchecked Sendable {
     let display: SCDisplay
-    let outputURL: URL
+    let outputDirURL: URL
+    
+    private let displayURL: URL
+    private let metadataURL: URL
+    private let mouseTracker: MouseTracker
     
     private var stream: SCStream?
     private var assetWriter: AVAssetWriter?
@@ -169,9 +181,17 @@ class Recorder: NSObject, SCStreamDelegate, SCStreamOutput {
     // Process stream buffers on a dedicated thread to ensure zero frame-dropping and memory safety
     private let queue = DispatchQueue(label: "com.screenrecorder.queue", qos: .userInteractive)
     
-    init(display: SCDisplay, outputURL: URL) {
+    init(display: SCDisplay, outputDirURL: URL) throws {
         self.display = display
-        self.outputURL = outputURL
+        self.outputDirURL = outputDirURL
+        
+        self.displayURL = outputDirURL.appendingPathComponent("display.mp4")
+        self.metadataURL = outputDirURL.appendingPathComponent("metadata.json")
+        
+        let movesURL = outputDirURL.appendingPathComponent("mouse-moves.json")
+        let clicksURL = outputDirURL.appendingPathComponent("mouse-clicks.json")
+        
+        self.mouseTracker = try MouseTracker(movesURL: movesURL, clicksURL: clicksURL)
     }
     
     func start() async throws {
@@ -191,7 +211,7 @@ class Recorder: NSObject, SCStreamDelegate, SCStreamOutput {
         config.captureResolution = .best // Requires macOS 14.0
         
         // AVAssetWriter Setup (H.264 | 60 FPS)
-        let writer = try AVAssetWriter(outputURL: outputURL, fileType: .mp4)
+        let writer = try AVAssetWriter(outputURL: displayURL, fileType: .mp4)
         let videoSettings: [String: Any] = [
             AVVideoCodecKey: AVVideoCodecType.h264,
             AVVideoWidthKey: config.width,
@@ -217,6 +237,9 @@ class Recorder: NSObject, SCStreamDelegate, SCStreamOutput {
         try newStream.addStreamOutput(self, type: .screen, sampleHandlerQueue: queue)
         self.stream = newStream
         
+        // Start Mouse Tracker asynchronously (drops events until `hasWrittenFirstFrame` precisely kicks in)
+        try await mouseTracker.start()
+        
         try await newStream.startCapture()
         
         // Safely mutate `isRecording` on the dedicated queue to prevent TSAN races
@@ -224,6 +247,9 @@ class Recorder: NSObject, SCStreamDelegate, SCStreamOutput {
     }
     
     func stop() async throws {
+        // Immediately halt gathering inputs to cleanly tie-off arrays with the stream's close timestamp
+        mouseTracker.isCapturing = false
+        
         // Evaluate condition and flip flag synchronously to avoid races with the delegate callback
         let wasRecording = queue.sync { () -> Bool in
             let state = self.isRecording
@@ -251,8 +277,8 @@ class Recorder: NSObject, SCStreamDelegate, SCStreamOutput {
                 
                 if writer.status == .writing && self.hasWrittenFirstFrame {
                     input.markAsFinished()
-                    writer.finishWriting {
-                        if let error = writer.error {
+                    writer.finishWriting { [weak self] in
+                        if let error = self?.assetWriter?.error {
                             continuation.resume(throwing: error)
                         } else {
                             continuation.resume(returning: ())
@@ -266,6 +292,8 @@ class Recorder: NSObject, SCStreamDelegate, SCStreamOutput {
                 }
             }
         }
+        
+        await mouseTracker.stop()
     }
     
     // MARK: - SCStreamOutput
@@ -295,7 +323,30 @@ class Recorder: NSObject, SCStreamDelegate, SCStreamOutput {
             
             if writer.status == .writing, input.isReadyForMoreMediaData {
                 input.append(sampleBuffer)
-                hasWrittenFirstFrame = true
+                
+                // Align the metadata initialization uniquely on the precise hardware timestamp of the absolute first frame
+                if !hasWrittenFirstFrame {
+                    hasWrittenFirstFrame = true
+
+                    let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+                    let baseHostTimeSeconds = pts.seconds
+                    let baseUnixTimeMs = Date().timeIntervalSince1970 * 1000.0
+                    
+                    mouseTracker.setBaseTimes(hostTimeSeconds: baseHostTimeSeconds, unixTimeMs: baseUnixTimeMs)
+
+                    mouseTracker.isCapturing = true // Pinpoint precisely synced mouse collection origin
+                    
+                    let metadataURL = self.metadataURL
+                    
+                    DispatchQueue.global(qos: .background).async {
+                        let json = "{\n  \"unixTimeMs\": \(baseUnixTimeMs)\n}\n"
+                        do {
+                            try json.write(to: metadataURL, atomically: true, encoding: .utf8)
+                        } catch {
+                            fputs("Error writing metadata: \(error.localizedDescription)\n", stderr)
+                        }
+                    }
+                }
             } else if writer.status == .failed {
                 if !hasPrintedError {
                     if let error = writer.error {
@@ -310,5 +361,198 @@ class Recorder: NSObject, SCStreamDelegate, SCStreamOutput {
     // MARK: - SCStreamDelegate
     func stream(_ stream: SCStream, didStopWithError error: Error) {
         fputs("Stream Error: \(error.localizedDescription)\n", stderr)
+    }
+}
+
+// MARK: - Global Mouse Tracking Subsystem
+@available(macOS 14.0, *)
+final class MouseTracker: @unchecked Sendable {
+    let movesWriter: JSONStreamWriter
+    let clicksWriter: JSONStreamWriter
+
+    private var baseHostTimeSeconds: Double = 0
+    private var baseUnixTimeMs: Double = 0
+
+    private var runLoop: CFRunLoop?
+    private var tapPort: CFMachPort?
+    private var trackerThread: Thread?
+    
+    private let capturingLock = NSLock()
+    private var _isCapturing = false
+    
+    /// Thread-safe switch to definitively dictate alignment timing of inputs mapped against the video sequence
+    var isCapturing: Bool {
+        get {
+            capturingLock.lock()
+            defer { capturingLock.unlock() }
+            return _isCapturing
+        }
+        set {
+            capturingLock.lock()
+            _isCapturing = newValue
+            capturingLock.unlock()
+        }
+    }
+    
+    init(movesURL: URL, clicksURL: URL) throws {
+        self.movesWriter = try JSONStreamWriter(url: movesURL, label: "com.recorder.movesWriter")
+        self.clicksWriter = try JSONStreamWriter(url: clicksURL, label: "com.recorder.clicksWriter")
+    }
+
+    func setBaseTimes(hostTimeSeconds: Double, unixTimeMs: Double) {
+        capturingLock.lock()
+        defer { capturingLock.unlock() }
+        self.baseHostTimeSeconds = hostTimeSeconds
+        self.baseUnixTimeMs = unixTimeMs
+    }
+    
+    func start() async throws {
+        // Swift concurrency safe bridge
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            let thread = Thread { [weak self] in
+                guard let self = self else {
+                    continuation.resume(throwing: NSError(domain: "MouseTracker", code: 2, userInfo: [NSLocalizedDescriptionKey: "Tracker deallocated before thread initialization"]))
+                    return
+                }
+                
+                let mask: CGEventMask =
+                    (UInt64(1) << CGEventType.mouseMoved.rawValue) |
+                    (UInt64(1) << CGEventType.leftMouseDragged.rawValue) |
+                    (UInt64(1) << CGEventType.rightMouseDragged.rawValue) |
+                    (UInt64(1) << CGEventType.otherMouseDragged.rawValue) |
+                    (UInt64(1) << CGEventType.leftMouseDown.rawValue) |
+                    (UInt64(1) << CGEventType.leftMouseUp.rawValue) |
+                    (UInt64(1) << CGEventType.rightMouseDown.rawValue) |
+                    (UInt64(1) << CGEventType.rightMouseUp.rawValue) |
+                    (UInt64(1) << CGEventType.otherMouseDown.rawValue) |
+                    (UInt64(1) << CGEventType.otherMouseUp.rawValue)
+                
+                let userInfo = Unmanaged.passUnretained(self).toOpaque()
+                
+                let callback: CGEventTapCallBack = { (proxy, type, event, refcon) -> Unmanaged<CGEvent>? in
+                    // Null return for '.listenOnly' eliminates retain count loops entirely and flawlessly preserves memory
+                    guard let refcon = refcon else { return nil }
+                    let tracker = Unmanaged<MouseTracker>.fromOpaque(refcon).takeUnretainedValue()
+                    tracker.handle(event: event, type: type)
+                    return nil
+                }
+                
+                guard let tap = CGEvent.tapCreate(
+                    tap: .cgSessionEventTap,
+                    place: .headInsertEventTap,
+                    options: .listenOnly,
+                    eventsOfInterest: mask,
+                    callback: callback,
+                    userInfo: userInfo
+                ) else {
+                    continuation.resume(throwing: NSError(domain: "MouseTracker", code: 1, userInfo: [NSLocalizedDescriptionKey: "Failed to create hardware event tap. Please ensure your Terminal (or executable) is granted 'Accessibility' permissions in System Settings -> Privacy & Security."]))
+                    return
+                }
+                
+                self.tapPort = tap
+                let runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
+                let currentRunLoop = CFRunLoopGetCurrent()
+                self.runLoop = currentRunLoop
+                
+                CFRunLoopAddSource(currentRunLoop, runLoopSource, .commonModes)
+                CGEvent.tapEnable(tap: tap, enable: true)
+                
+                continuation.resume()
+                CFRunLoopRun()
+            }
+            
+            self.trackerThread = thread
+            thread.start()
+        }
+    }
+    
+    func stop() async {
+        // Completely invalidate kernel resources to prevent any port/runloop leakage
+        if let tap = tapPort {
+            CGEvent.tapEnable(tap: tap, enable: false)
+            CFMachPortInvalidate(tap)
+        }
+        if let rl = runLoop {
+            CFRunLoopStop(rl)
+        }
+        
+        await movesWriter.finish()
+        await clicksWriter.finish()
+    }
+    
+    private func handle(event: CGEvent, type: CGEventType) {
+        guard isCapturing else { return }
+        
+        let loc = event.location
+        
+        // event.timestamp is Mach absolute time in nanoseconds
+        let eventHostSeconds = Double(event.timestamp) / 1_000_000_000.0
+        let processTimeMs = (eventHostSeconds - baseHostTimeSeconds) * 1000.0
+        let unixTimeMs = baseUnixTimeMs + processTimeMs
+        
+        switch type {
+        case .mouseMoved, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged:
+            let json = "{\"x\":\(loc.x),\"y\":\(loc.y),\"unixTimeMs\":\(unixTimeMs),\"processTimeMs\":\(processTimeMs)}"
+            movesWriter.append(json)
+            
+        case .leftMouseDown, .leftMouseUp, .rightMouseDown, .rightMouseUp, .otherMouseDown, .otherMouseUp:
+            let button: String
+            let action: String
+            
+            switch type {
+            case .leftMouseDown: button = "left"; action = "mouseDown"
+            case .leftMouseUp: button = "left"; action = "mouseUp"
+            case .rightMouseDown: button = "right"; action = "mouseDown"
+            case .rightMouseUp: button = "right"; action = "mouseUp"
+            case .otherMouseDown: button = "other"; action = "mouseDown"
+            case .otherMouseUp: button = "other"; action = "mouseUp"
+            default: return
+            }
+            
+            let json = "{\"x\":\(loc.x),\"y\":\(loc.y),\"type\":\"\(action)\",\"button\":\"\(button)\",\"unixTimeMs\":\(unixTimeMs),\"processTimeMs\":\(processTimeMs)}"
+            clicksWriter.append(json)
+            
+        default:
+            break
+        }
+    }
+}
+
+// MARK: - Asynchronous Stream Writer
+/// Efficiently buffers and formats continuous JSON objects natively avoiding exhaustive memory allocation
+@available(macOS 14.0, *)
+final class JSONStreamWriter: @unchecked Sendable {
+    private let fileHandle: FileHandle
+    private var isFirst = true
+    private let queue: DispatchQueue
+    
+    init(url: URL, label: String) throws {
+        FileManager.default.createFile(atPath: url.path, contents: Data("[\n".utf8), attributes: nil)
+        self.fileHandle = try FileHandle(forWritingTo: url)
+        try self.fileHandle.seekToEnd()
+        self.queue = DispatchQueue(label: label, qos: .userInitiated)
+    }
+    
+    func append(_ jsonString: String) {
+        queue.async {
+            let prefix = self.isFirst ? "  " : ",\n  "
+            self.isFirst = false
+            let entry = prefix + jsonString
+            if let data = entry.data(using: .utf8) {
+                try? self.fileHandle.write(contentsOf: data)
+            }
+        }
+    }
+    
+    func finish() async {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            queue.async {
+                if let endData = "\n]\n".data(using: .utf8) {
+                    try? self.fileHandle.write(contentsOf: endData)
+                }
+                try? self.fileHandle.close()
+                continuation.resume()
+            }
+        }
     }
 }

@@ -72,7 +72,7 @@ export function setupRecorderIpc(): void {
 
           try {
             const projectDir = getProjectDirPath(display);
-            const outputPath = path.join(projectDir, 'recording.mp4');
+            const outputPath = path.join(projectDir, 'recording');
 
             await fs.promises.mkdir(projectDir, { recursive: true });
 
